@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Project entrypoint for the record button demo."""
+"""Legacy entrypoint mapped to the unified camera app."""
 
-from recordings.record_button import main
+from mjpeg_server import main
 
 
 if __name__ == "__main__":
