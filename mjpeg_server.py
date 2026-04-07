@@ -29,6 +29,10 @@ ZOOM_MODE_PIN = 22
 UP_PIN = 23
 DOWN_PIN = 24
 
+# All buttons wired GPIO->GND: use pull_up=True (standard configuration)
+# Released = HIGH (1), Pressed = LOW (0)
+BUTTON_CONFIG = {"pull_up": True}
+
 RECORDINGS_DIR = Path("recordings")
 BRIGHTNESS_STEP = 0.05
 BRIGHTNESS_MIN = -1.0
@@ -36,6 +40,9 @@ BRIGHTNESS_MAX = 1.0
 ZOOM_STEP = 0.1
 ZOOM_MIN = 1.0
 ZOOM_MAX = 4.0
+UP_DOWN_BOUNCE_TIME = 0.05
+UP_DOWN_HOLD_TIME = 0.3
+MODE_BUTTON_BOUNCE_TIME = 0.08  # Slightly longer for reliable mode toggle
 
 output = None
 picam2 = None
@@ -139,21 +146,21 @@ class ButtonController:
         self.picam2.set_controls({"Brightness": self.brightness})
         self._apply_zoom()
 
-        self.record_button = Button(RECORD_PIN, pull_up=True, bounce_time=0.1)
-        self.brightness_button = Button(BRIGHTNESS_MODE_PIN, pull_up=True, bounce_time=0.15)
-        self.zoom_button = Button(ZOOM_MODE_PIN, pull_up=True, bounce_time=0.15)
+        self.record_button = Button(RECORD_PIN, **BUTTON_CONFIG, bounce_time=0.1)
+        self.brightness_button = Button(BRIGHTNESS_MODE_PIN, **BUTTON_CONFIG, bounce_time=MODE_BUTTON_BOUNCE_TIME)
+        self.zoom_button = Button(ZOOM_MODE_PIN, **BUTTON_CONFIG, bounce_time=MODE_BUTTON_BOUNCE_TIME)
         self.up_button = Button(
             UP_PIN,
-            pull_up=True,
-            bounce_time=0.05,
-            hold_time=0.1,
+            **BUTTON_CONFIG,
+            bounce_time=UP_DOWN_BOUNCE_TIME,
+            hold_time=UP_DOWN_HOLD_TIME,
             hold_repeat=True,
         )
         self.down_button = Button(
             DOWN_PIN,
-            pull_up=True,
-            bounce_time=0.05,
-            hold_time=0.1,
+            **BUTTON_CONFIG,
+            bounce_time=UP_DOWN_BOUNCE_TIME,
+            hold_time=UP_DOWN_HOLD_TIME,
             hold_repeat=True,
         )
 
@@ -163,55 +170,35 @@ class ButtonController:
 
     def _wire_callbacks(self) -> None:
         self.record_button.when_pressed = self.handle_record_button
-        self.record_button.when_released = lambda: self._debug_release(RECORD_PIN, "Record")
         self.brightness_button.when_pressed = self.handle_brightness_button
-        self.brightness_button.when_released = lambda: self._debug_release(BRIGHTNESS_MODE_PIN, "Brightness mode")
         self.zoom_button.when_pressed = self.handle_zoom_button
-        self.zoom_button.when_released = lambda: self._debug_release(ZOOM_MODE_PIN, "Zoom mode")
 
-        self.up_button.when_pressed = self.handle_up
-        self.up_button.when_held = self.handle_up
-        self.up_button.when_released = lambda: self._debug_release(UP_PIN, "Up")
-        self.down_button.when_pressed = self.handle_down
-        self.down_button.when_held = self.handle_down
-        self.down_button.when_released = lambda: self._debug_release(DOWN_PIN, "Down")
+        self.up_button.when_pressed = lambda: self._handle_up_event("PRESSED")
+        self.up_button.when_held = lambda: self._handle_up_event("HELD")
+        self.down_button.when_pressed = lambda: self._handle_down_event("PRESSED")
+        self.down_button.when_held = lambda: self._handle_down_event("HELD")
 
     def _debug_pin_map(self) -> None:
         print("[GPIO] Button mapping:")
-        print(f"[GPIO] Record: GPIO{RECORD_PIN} (click-only, debounce=100ms)")
-        print(f"[GPIO] Brightness mode: GPIO{BRIGHTNESS_MODE_PIN} (click-only, debounce=150ms)")
-        print(f"[GPIO] Zoom mode: GPIO{ZOOM_MODE_PIN} (click-only, debounce=150ms)")
-        print(f"[GPIO] Up: GPIO{UP_PIN} (hold-repeat, debounce=50ms, hold_time=100ms)")
-        print(f"[GPIO] Down: GPIO{DOWN_PIN} (hold-repeat, debounce=50ms, hold_time=100ms)")
-        print("[GPIO] === GPIO State Check (should be HIGH when released) ===")
-        print(f"[GPIO] Record (GPIO{RECORD_PIN}): {self.record_button.value} (1=HIGH/released, 0=LOW/pressed)")
-        print(f"[GPIO] Brightness (GPIO{BRIGHTNESS_MODE_PIN}): {self.brightness_button.value}")
-        print(f"[GPIO] Zoom (GPIO{ZOOM_MODE_PIN}): {self.zoom_button.value}")
-        print(f"[GPIO] Up (GPIO{UP_PIN}): {self.up_button.value}")
-        print(f"[GPIO] Down (GPIO{DOWN_PIN}): {self.down_button.value}")
-
-    def _debug_release(self, pin: int, name: str) -> None:
-        print(f"[BTN] {name} (GPIO{pin}) released")
+        print(f"[GPIO] Record: GPIO{RECORD_PIN}")
+        print(f"[GPIO] Brightness mode: GPIO{BRIGHTNESS_MODE_PIN}")
+        print(f"[GPIO] Zoom mode: GPIO{ZOOM_MODE_PIN}")
+        print(f"[GPIO] Up: GPIO{UP_PIN}")
+        print(f"[GPIO] Down: GPIO{DOWN_PIN}")
 
     def handle_record_button(self) -> None:
-        timestamp = time.time()
-        print(f"[BTN] Record (GPIO{RECORD_PIN}) PRESSED at {timestamp:.3f}")
         if not self.recording:
             self.start_recording()
         else:
             self.stop_recording()
 
     def handle_brightness_button(self) -> None:
-        timestamp = time.time()
-        print(f"[BTN] Brightness mode (GPIO{BRIGHTNESS_MODE_PIN}) PRESSED at {timestamp:.3f}")
         if self.mode == Mode.BRIGHTNESS:
             self.set_mode(Mode.ARM)
         else:
             self.set_mode(Mode.BRIGHTNESS)
 
     def handle_zoom_button(self) -> None:
-        timestamp = time.time()
-        print(f"[BTN] Zoom mode (GPIO{ZOOM_MODE_PIN}) PRESSED at {timestamp:.3f}")
         if self.mode == Mode.ZOOM:
             self.set_mode(Mode.ARM)
         else:
@@ -221,37 +208,17 @@ class ButtonController:
         self.mode = mode
         print(f"[MODE] Active mode: {self.mode.value}")
 
-    def handle_up(self) -> None:
-        timestamp = time.time()
-        is_held = self.up_button.is_held if hasattr(self.up_button, 'is_held') else False
-        event_type = "HELD" if is_held else "PRESSED"
-        print(f"[BTN] Up (GPIO{UP_PIN}) {event_type} at {timestamp:.3f}")
+    def _handle_up_event(self, event_type: str) -> None:
         if self.mode == Mode.BRIGHTNESS:
             self.adjust_brightness(BRIGHTNESS_STEP)
         elif self.mode == Mode.ZOOM:
             self.adjust_zoom(ZOOM_STEP)
-        else:
-            self.arm_up()
 
-    def handle_down(self) -> None:
-        timestamp = time.time()
-        is_held = self.down_button.is_held if hasattr(self.down_button, 'is_held') else False
-        event_type = "HELD" if is_held else "PRESSED"
-        print(f"[BTN] Down (GPIO{DOWN_PIN}) {event_type} at {timestamp:.3f}")
+    def _handle_down_event(self, event_type: str) -> None:
         if self.mode == Mode.BRIGHTNESS:
             self.adjust_brightness(-BRIGHTNESS_STEP)
         elif self.mode == Mode.ZOOM:
             self.adjust_zoom(-ZOOM_STEP)
-        else:
-            self.arm_down()
-
-    def arm_up(self) -> None:
-        # Replace with robotic arm control later.
-        print("[ARM] ARM UP")
-
-    def arm_down(self) -> None:
-        # Replace with robotic arm control later.
-        print("[ARM] ARM DOWN")
 
     def start_recording(self) -> None:
         RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
