@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#1a1a1a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Camera">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==">
+    <title>Accessible Camera</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html, body {
+            width: 100%;
+            height: 100%;
+            background: #0a0a0a;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            overflow: hidden;
+        }
+        
+        body {
+            display: flex;
+            flex-direction: column;
+            position: fixed;
+            top: 0;
+            left: 0;
+        }
+        
+        .camera-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #000;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .camera-stream {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        .status-overlay {
+            position: absolute;
+            top: 16px;
+            left: 16px;
+            right: 16px;
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            z-index: 10;
+        }
+        
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(0, 0, 0, 0.7);
+            color: #fff;
+            padding: 10px 14px;
+            border-radius: 24px;
+            font-size: 14px;
+            font-weight: 600;
+            backdrop-filter: blur(10px);
+            min-width: 48px;
+            justify-content: center;
+        }
+        
+        .status-icon {
+            font-size: 18px;
+            line-height: 1;
+        }
+        
+        .recording .status-icon {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            background: #ff3b30;
+            border-radius: 2px;
+            animation: pulse 1s infinite;
+        }
+        
+        .brightness-mode .status-badge {
+            border: 2px solid #ffcc00;
+        }
+        
+        .zoom-mode .status-badge {
+            border: 2px solid #30b0ff;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .mode-indicator {
+            position: absolute;
+            bottom: 16px;
+            left: 16px;
+            background: rgba(0, 0, 0, 0.7);
+            color: #fff;
+            padding: 12px 16px;
+            border-radius: 20px;
+            font-size: 16px;
+            font-weight: 600;
+            backdrop-filter: blur(10px);
+            z-index: 10;
+        }
+        
+        .mode-indicator.arm {
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        .brightness-value, .zoom-value {
+            position: absolute;
+            bottom: 16px;
+            right: 16px;
+            background: rgba(0, 0, 0, 0.7);
+            color: #fff;
+            padding: 12px 16px;
+            border-radius: 20px;
+            font-size: 16px;
+            font-weight: 600;
+            backdrop-filter: blur(10px);
+            z-index: 10;
+            min-width: 80px;
+            text-align: center;
+        }
+        
+        .loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 20;
+            text-align: center;
+        }
+        
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-top: 3px solid #fff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 12px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .loading-text {
+            font-size: 14px;
+            color: #aaa;
+        }
+
+        /* iPad Home Screen style */
+        body.standalone {
+            padding-top: env(safe-area-inset-top);
+            padding-bottom: env(safe-area-inset-bottom);
+            padding-left: env(safe-area-inset-left);
+            padding-right: env(safe-area-inset-right);
+        }
+    </style>
+</head>
+<body>
+    <div class="camera-container">
+        <img id="stream" class="camera-stream" src="/stream.mjpg" alt="Live Camera Feed">
+        
+        <div class="status-overlay">
+            <div id="recording-badge" class="status-badge recording" style="display: none;">
+                <span class="status-icon"></span>
+                <span>Recording</span>
+            </div>
+            <div id="brightness-badge" class="status-badge brightness-mode" style="display: none;">
+                <span class="status-icon">☀️</span>
+                <span>Brightness</span>
+            </div>
+            <div id="zoom-badge" class="status-badge zoom-mode" style="display: none;">
+                <span class="status-icon">🔍</span>
+                <span>Zoom</span>
+            </div>
+        </div>
+        
+        <div id="mode-indicator" class="mode-indicator arm"></div>
+        <div id="brightness-value" class="brightness-value" style="display: none;"></div>
+        <div id="zoom-value" class="zoom-value" style="display: none;"></div>
+        
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <div class="loading-text">Starting camera...</div>
+        </div>
+    </div>
+
+    <script>
+        const updateInterval = 500; // ms
+        let lastMode = null;
+        let lastRecording = null;
+        let lastBrightness = null;
+        let lastZoom = null;
+
+        async function updateStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                
+                // Hide loading after first successful fetch
+                document.getElementById('loading').style.display = 'none';
+                
+                // Update recording status
+                const recordingBadge = document.getElementById('recording-badge');
+                if (data.recording !== lastRecording) {
+                    recordingBadge.style.display = data.recording ? 'flex' : 'none';
+                    lastRecording = data.recording;
+                }
+                
+                // Update mode indicators
+                if (data.mode !== lastMode) {
+                    document.getElementById('mode-indicator').textContent = 
+                        data.mode === 'brightness' ? '☀️ Brightness' : 
+                        data.mode === 'zoom' ? '🔍 Zoom' : '';
+                    
+                    const brightnessBadge = document.getElementById('brightness-badge');
+                    const zoomBadge = document.getElementById('zoom-badge');
+                    
+                    brightnessBadge.style.display = data.mode === 'brightness' ? 'flex' : 'none';
+                    zoomBadge.style.display = data.mode === 'zoom' ? 'flex' : 'none';
+                    
+                    lastMode = data.mode;
+                }
+                
+                // Update brightness value
+                const brightnessValue = document.getElementById('brightness-value');
+                if (data.brightness !== lastBrightness && data.mode === 'brightness') {
+                    const pct = Math.round((data.brightness / 1.0) * 100);
+                    brightnessValue.textContent = `Brightness: ${pct}%`;
+                    brightnessValue.style.display = data.mode === 'brightness' ? 'block' : 'none';
+                    lastBrightness = data.brightness;
+                } else if (data.mode !== 'brightness' && lastBrightness !== null) {
+                    brightnessValue.style.display = 'none';
+                }
+                
+                // Update zoom value
+                const zoomValue = document.getElementById('zoom-value');
+                if (data.zoom !== lastZoom && data.mode === 'zoom') {
+                    zoomValue.textContent = `Zoom: ${data.zoom.toFixed(1)}x`;
+                    zoomValue.style.display = data.mode === 'zoom' ? 'block' : 'none';
+                    lastZoom = data.zoom;
+                } else if (data.mode !== 'zoom' && lastZoom !== null) {
+                    zoomValue.style.display = 'none';
+                }
+            } catch (err) {
+                console.error('Status update failed:', err);
+            }
+        }
+
+        // Update status on page load
+        updateStatus();
+        
+        // Poll for status updates
+        setInterval(updateStatus, updateInterval);
+        
+        // Register service worker for PWA support
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js').catch(err => 
+                console.log('Service Worker registration failed:', err)
+            );
+        }
+        
+        // Detect if running as standalone app
+        if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches) {
+            document.body.classList.add('standalone');
+        }
+    </script>
+</body>
+</html>
