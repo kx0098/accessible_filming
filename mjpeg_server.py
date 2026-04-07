@@ -223,7 +223,7 @@ class ButtonController:
 
         self._wire_callbacks()
         self._debug_pin_map()
-        print(f"[MODE] Active mode: {self.mode.value}")
+        self._print_startup_defaults()
 
     def _wire_callbacks(self) -> None:
         self.record_button.when_pressed = self.handle_record_button
@@ -243,18 +243,33 @@ class ButtonController:
         print(f"[GPIO] Up: GPIO{UP_PIN}")
         print(f"[GPIO] Down: GPIO{DOWN_PIN}")
 
+    def _print_startup_defaults(self) -> None:
+        """Print all default state values being applied on startup."""
+        print("[DEFAULTS] App state initialized:")
+        print(f"[DEFAULTS]   Mode: {self.mode.value}")
+        print(f"[DEFAULTS]   Recording: {self.recording}")
+        print(f"[DEFAULTS]   Brightness: {self.brightness}")
+        print(f"[DEFAULTS]   Zoom: {self.zoom_factor}x")
+
     def _reset_camera_controls(self) -> None:
         """Reset all camera controls to factory defaults on startup."""
         try:
-            # Reset brightness to 0.0 (neutral)
-            self.picam2.set_controls({"Brightness": 0.0})
+            reset_controls = {
+                "Brightness": 0.0,  # Neutral brightness
+                "ExposureValue": 0.0,  # Neutral exposure (auto mode)
+            }
+            
+            self.picam2.set_controls(reset_controls)
             
             # Reset zoom/crop to full sensor (no crop = 1.0x zoom)
             if self.scaler_crop_max:
                 max_x, max_y, max_w, max_h = self.scaler_crop_max
                 self.picam2.set_controls({"ScalerCrop": (max_x, max_y, max_w, max_h)})
             
-            print("[INIT] Camera controls reset to defaults")
+            print("[DEFAULTS] Camera controls reset:")
+            print(f"[DEFAULTS]   Brightness: 0.0 (neutral)")
+            print(f"[DEFAULTS]   ExposureValue: 0.0 (auto)")
+            print(f"[DEFAULTS]   Zoom: 1.0x (full sensor)")
         except Exception as exc:
             print(f"[WARN] Could not reset camera controls: {exc}")
 
@@ -408,6 +423,12 @@ def main() -> None:
         config = picam2_instance.create_video_configuration(main={"size": (WIDTH, HEIGHT)})
         picam2_instance.configure(config)
         picam2_instance.start()
+        
+        # Reset camera controls right after starting to ensure clean state
+        picam2_instance.set_controls({
+            "Brightness": 0.0,
+            "ExposureValue": 0.0,
+        })
 
         # Wire all buttons and mode state machine (BEFORE starting encoder so controls are set)
         controller = ButtonController(picam2_instance)
@@ -422,9 +443,13 @@ def main() -> None:
         # Print connection info
         address = ("0.0.0.0", PORT)
         ip_address = get_local_ip()
-        print("[INIT] Unified camera app started")
+        print("[INIT] ============================================")
+        print("[INIT] Fresh app startup - all state reset to defaults")
+        print("[INIT] ============================================")
+        print(f"[INIT] Unified camera app started")
         print(f"[URL] http://{ip_address}:{PORT}/")
         print("[READY] Live stream active. Use buttons for record/mode control")
+        print("[READY] ============================================")
 
         # Start HTTP server
         server_instance = StreamingServer(address, StreamingHandler)
