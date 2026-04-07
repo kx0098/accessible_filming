@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import io
+import json
 import socket
 import socketserver
 import subprocess
@@ -46,6 +47,7 @@ MODE_BUTTON_BOUNCE_TIME = 0.08  # Slightly longer for reliable mode toggle
 
 output = None
 picam2 = None
+controller_instance = None
 
 PAGE = f"""\
 <html>
@@ -85,12 +87,13 @@ class StreamingHandler(server.BaseHTTPRequestHandler):
             self.send_header("Location", "/index.html")
             self.end_headers()
         elif self.path == "/index.html":
-            content = PAGE.encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html")
-            self.send_header("Content-Length", len(content))
-            self.end_headers()
-            self.wfile.write(content)
+            self._serve_file("index.html", "text/html")
+        elif self.path == "/manifest.json":
+            self._serve_file("manifest.json", "application/manifest+json")
+        elif self.path == "/sw.js":
+            self._serve_file("sw.js", "application/javascript")
+        elif self.path == "/api/status":
+            self._serve_status()
         elif self.path == "/stream.mjpg":
             self.send_response(200)
             self.send_header("Age", 0)
@@ -114,6 +117,57 @@ class StreamingHandler(server.BaseHTTPRequestHandler):
         else:
             self.send_error(404)
             self.end_headers()
+
+    def _serve_file(self, filename: str, content_type: str) -> None:
+        """Serve a static file from the project directory."""
+        file_path = Path(filename)
+        if not file_path.exists():
+            print(f"[HTTP] File not found: {filename}")
+            self.send_error(404)
+            self.end_headers()
+            return
+
+        try:
+            content = file_path.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", len(content))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(content)
+        except Exception as exc:
+            print(f"[HTTP] Error serving {filename}: {exc}")
+            self.send_error(500)
+            self.end_headers()
+
+    def _serve_status(self) -> None:
+        """Serve the current button controller state as JSON."""
+        global controller_instance
+        
+        if controller_instance is None:
+            status = {
+                "mode": "unknown",
+                "recording": False,
+                "brightness": 0.0,
+                "zoom": 1.0
+            }
+        else:
+            status = {
+                "mode": controller_instance.mode.value,
+                "recording": controller_instance.recording,
+                "brightness": controller_instance.brightness,
+                "zoom": controller_instance.zoom_factor
+            }
+        
+        response = json.dumps(status)
+        response_bytes = response.encode("utf-8")
+        
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", len(response_bytes))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(response_bytes)
 
     def log_message(self, format, *args):
         return
@@ -143,6 +197,9 @@ class ButtonController:
         self.zoom_factor = 1.0
         self.scaler_crop_max = self._resolve_scaler_crop_max()
 
+        # Reset all camera controls to defaults
+        self._reset_camera_controls()
+        
         self.picam2.set_controls({"Brightness": self.brightness})
         self._apply_zoom()
 
@@ -185,6 +242,21 @@ class ButtonController:
         print(f"[GPIO] Zoom mode: GPIO{ZOOM_MODE_PIN}")
         print(f"[GPIO] Up: GPIO{UP_PIN}")
         print(f"[GPIO] Down: GPIO{DOWN_PIN}")
+
+    def _reset_camera_controls(self) -> None:
+        """Reset all camera controls to factory defaults on startup."""
+        try:
+            # Reset brightness to 0.0 (neutral)
+            self.picam2.set_controls({"Brightness": 0.0})
+            
+            # Reset zoom/crop to full sensor (no crop = 1.0x zoom)
+            if self.scaler_crop_max:
+                max_x, max_y, max_w, max_h = self.scaler_crop_max
+                self.picam2.set_controls({"ScalerCrop": (max_x, max_y, max_w, max_h)})
+            
+            print("[INIT] Camera controls reset to defaults")
+        except Exception as exc:
+            print(f"[WARN] Could not reset camera controls: {exc}")
 
     def handle_record_button(self) -> None:
         if not self.recording:
@@ -317,7 +389,7 @@ def print_camera_lock_info() -> None:
 
 
 def main() -> None:
-    global output, picam2
+    global output, picam2, controller_instance
 
     picam2_instance = None
     server_instance = None
@@ -339,6 +411,7 @@ def main() -> None:
 
         # Wire all buttons and mode state machine (BEFORE starting encoder so controls are set)
         controller = ButtonController(picam2_instance)
+        controller_instance = controller  # Make accessible to StreamingHandler
 
         # Start MJPEG stream
         output_instance = StreamingOutput()
