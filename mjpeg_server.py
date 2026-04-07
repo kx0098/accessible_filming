@@ -197,12 +197,6 @@ class ButtonController:
         self.zoom_factor = 1.0
         self.scaler_crop_max = self._resolve_scaler_crop_max()
 
-        # Reset all camera controls to defaults
-        self._reset_camera_controls()
-        
-        self.picam2.set_controls({"Brightness": self.brightness})
-        self._apply_zoom()
-
         self.record_button = Button(RECORD_PIN, **BUTTON_CONFIG, bounce_time=0.1)
         self.brightness_button = Button(BRIGHTNESS_MODE_PIN, **BUTTON_CONFIG, bounce_time=MODE_BUTTON_BOUNCE_TIME)
         self.zoom_button = Button(ZOOM_MODE_PIN, **BUTTON_CONFIG, bounce_time=MODE_BUTTON_BOUNCE_TIME)
@@ -250,28 +244,6 @@ class ButtonController:
         print(f"[DEFAULTS]   Recording: {self.recording}")
         print(f"[DEFAULTS]   Brightness: {self.brightness}")
         print(f"[DEFAULTS]   Zoom: {self.zoom_factor}x")
-
-    def _reset_camera_controls(self) -> None:
-        """Reset all camera controls to factory defaults on startup."""
-        try:
-            reset_controls = {
-                "Brightness": 0.0,  # Neutral brightness
-                "ExposureValue": 0.0,  # Neutral exposure (auto mode)
-            }
-            
-            self.picam2.set_controls(reset_controls)
-            
-            # Reset zoom/crop to full sensor (no crop = 1.0x zoom)
-            if self.scaler_crop_max:
-                max_x, max_y, max_w, max_h = self.scaler_crop_max
-                self.picam2.set_controls({"ScalerCrop": (max_x, max_y, max_w, max_h)})
-            
-            print("[DEFAULTS] Camera controls reset:")
-            print(f"[DEFAULTS]   Brightness: 0.0 (neutral)")
-            print(f"[DEFAULTS]   ExposureValue: 0.0 (auto)")
-            print(f"[DEFAULTS]   Zoom: 1.0x (full sensor)")
-        except Exception as exc:
-            print(f"[WARN] Could not reset camera controls: {exc}")
 
     def handle_record_button(self) -> None:
         if not self.recording:
@@ -430,13 +402,21 @@ def main() -> None:
         picam2_instance.configure(config)
         picam2_instance.start()
         
-        # Reset camera controls right after starting to ensure clean state
-        picam2_instance.set_controls({
-            "Brightness": 0.0,
-            "ExposureValue": 0.0,
-        })
+        # Single point: Reset all camera controls to defaults after camera starts
+        print("[DEFAULTS] Camera controls reset:")
+        picam2_instance.set_controls({"Brightness": 0.0})
+        print(f"[DEFAULTS]   Brightness: 0.0 (neutral)")
+        
+        picam2_instance.set_controls({"ExposureValue": 0.0})
+        print(f"[DEFAULTS]   ExposureValue: 0.0 (auto)")
+        
+        crop = picam2_instance.camera_properties.get("ScalerCropMaximum")
+        if crop:
+            crop_tuple = tuple(int(v) for v in crop)
+            picam2_instance.set_controls({"ScalerCrop": crop_tuple})
+        print(f"[DEFAULTS]   Zoom: 1.0x (full sensor)")
 
-        # Wire all buttons and mode state machine (BEFORE starting encoder so controls are set)
+        # Wire all buttons and mode state machine (BEFORE starting encoder)
         controller = ButtonController(picam2_instance)
         controller_instance = controller  # Make accessible to StreamingHandler
 
