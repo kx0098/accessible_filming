@@ -296,12 +296,14 @@ class ButtonController:
         print(f"[MODE] Active mode: {self.mode.value}")
 
     def _handle_up_event(self, event_type: str) -> None:
+        print(f"[UP] Button {event_type} in mode: {self.mode.value}")
         if self.mode == Mode.BRIGHTNESS:
             self.adjust_brightness(BRIGHTNESS_STEP)
         elif self.mode == Mode.ZOOM:
             self.adjust_zoom(ZOOM_STEP)
 
     def _handle_down_event(self, event_type: str) -> None:
+        print(f"[DOWN] Button {event_type} in mode: {self.mode.value}")
         if self.mode == Mode.BRIGHTNESS:
             self.adjust_brightness(-BRIGHTNESS_STEP)
         elif self.mode == Mode.ZOOM:
@@ -351,14 +353,18 @@ class ButtonController:
         return tuple(int(value) for value in crop)
 
     def _apply_zoom(self) -> None:
-        max_x, max_y, max_w, max_h = self.scaler_crop_max
+        try:
+            max_x, max_y, max_w, max_h = self.scaler_crop_max
 
-        crop_w = int(max_w / self.zoom_factor)
-        crop_h = int(max_h / self.zoom_factor)
-        crop_x = max_x + (max_w - crop_w) // 2
-        crop_y = max_y + (max_h - crop_h) // 2
+            crop_w = int(max_w / self.zoom_factor)
+            crop_h = int(max_h / self.zoom_factor)
+            crop_x = max_x + (max_w - crop_w) // 2
+            crop_y = max_y + (max_h - crop_h) // 2
 
-        self.picam2.set_controls({"ScalerCrop": (crop_x, crop_y, crop_w, crop_h)})
+            self.picam2.set_controls({"ScalerCrop": (crop_x, crop_y, crop_w, crop_h)})
+            print(f"[ZOOM] Camera crop applied: {self.zoom_factor:.2f}x")
+        except Exception as exc:
+            print(f"[ZOOM] Error applying zoom: {exc}")
 
     @staticmethod
     def _clamp(value: float, min_value: float, max_value: float) -> float:
